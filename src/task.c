@@ -28,14 +28,14 @@ struct Task
 	atomic_uint  m_active;
 	unsigned int m_generation;
 
-	_Alignas(max_align_t) char m_data[];
+	_Alignas(max_align_t) char m_data[64];
 };
 
 // Aim for a round number of 64 bytes - the common L1 line width
 #define TASK_SIZE  ((sizeof(struct Task) + 63) & (~63))
 
 // Check our #define is valid
-static_assert(TASK_SIZE - sizeof(struct Task) == TASK_PARAM_MAX,"TASK_PARAM_MAX is wrong");
+static_assert(TASK_SIZE - sizeof(struct Task) == 32,"struct Task alignment is wrong");
 
 // Aim for 32 Kb - about the size of L1 cache
 #define TASK_COUNT (32 * 1024 / TASK_SIZE)

@@ -15,6 +15,7 @@ static void parallelForSplit(task_t parent, const void* p)
 {
 	const struct ParaFor* pf = p;
 
+	// Check for L1 cache size
 	if (pf->elem_count * pf->elem_size <= 32 * 1024)
 		(*pf->fn)(pf->elems,pf->elem_count,pf->param);
 	else
@@ -44,26 +45,17 @@ static void parallelForSplit(task_t parent, const void* p)
 	}
 }
 
-int task_parallel_for(void* elems, size_t elem_count, size_t elem_size, task_parallel_for_fn_t fn, void* param)
+task_t task_parallel_for(void* elems, size_t elem_count, size_t elem_size, task_parallel_for_fn_t fn, void* param)
 {
-	// Check for L1 cache size
-	int err = 0;
-	if (elem_count * elem_size <= 32 * 1024)
-		(*fn)(elems,elem_count,param);
-	else
+	struct ParaFor task_data =
 	{
-		struct ParaFor task_data =
-		{
-			.elems = elems,
-			.elem_count = elem_count,
-			.elem_size = elem_size,
-			.fn = fn,
-			.param = param
-		};
-		task_t task;
-		err = task_run(&task,NULL,&parallelForSplit,&task_data,sizeof(struct ParaFor));
-		if (!err)
-			task_join(task);
-	}
-	return err;
+		.elems = elems,
+		.elem_count = elem_count,
+		.elem_size = elem_size,
+		.fn = fn,
+		.param = param
+	};
+	task_t task;
+	task_run(&task,NULL,&parallelForSplit,&task_data,sizeof(struct ParaFor));
+	return task;
 }

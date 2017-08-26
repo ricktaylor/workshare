@@ -5,10 +5,6 @@
  *      Author: rick
  */
 
-
-
-// For the header...
-
 #include "common.h"
 #include "task.h"
 
@@ -17,21 +13,7 @@
 #include <realtimeapiset.h>
 #endif
 
-#if defined(_WIN32)
-typedef SOCKET socket_t;
-#else
-typedef int socket_t;
-#endif
-
-typedef struct opaque_proactor_t
-{
-	int _unused;
-}* proactor_t;
-
-proactor_t proactor_create(task_t parent);
-void proactor_destroy(proactor_t pr);
-
-// Source
+#include "proactor.h"
 
 #if defined(_WIN32)
 typedef ULONG nfds_t;

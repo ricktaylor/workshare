@@ -47,7 +47,7 @@ int main(int argc, char* argv[])
 
 	dwStart = GetTickCount();
 
-	task_parallel_for(data2,data_set,sizeof(uint32_t),&test_fn,NULL);
+	task_join(task_parallel_for(data2,data_set,sizeof(uint32_t),&test_fn,NULL));
 
 	dwEnd = GetTickCount();
 
