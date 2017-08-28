@@ -70,24 +70,19 @@ static void parallelSortSplit(task_t parent, const void* p)
 		{
 			if ((ps->fn)(p,q,ps->param) > 0)
 			{
-				// Swap p and q, incrementing both
-				char* p_end = p + ps->elem_size;
-				while (p < p_end)
-				{
-					char t = *p;
-					*p++ = *q;
-					*q++ = t;
-				}
+				// Swap p and q
+				char t[ps->elem_size];
+				memcpy(t,p,ps->elem_size);
+				memcpy(p,q,ps->elem_size);
+				memcpy(q,t,ps->elem_size);
 
-				// Don't shoot past the end
-				if (q == end)
-					q -= ps->elem_size;
+				// Inc q
+				if (q < end - ps->elem_size)
+					q += ps->elem_size;
 			}
-			else
-			{
-				// Inc p
-				p += ps->elem_size;
-			}
+
+			// Inc p
+			p += ps->elem_size;
 		}
 	}
 }
