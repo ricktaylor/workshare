@@ -17,9 +17,7 @@
 
 #if defined(_WIN32)
 typedef ULONG nfds_t;
-typedef WSAPOLLFD pollfd_t;
 #else
-typedef struct pollfd pollfd_t;
 #define closesocket(s) close(s)
 #endif
 
@@ -49,7 +47,7 @@ struct Watcher
 struct Proactor
 {
 	task_t          m_task;
-	pollfd_t*       m_poll_fds;
+	struct pollfd*  m_poll_fds;
 	struct Watcher* m_watchers;
 	size_t          m_poll_alloc_size;
 	struct Timer*   m_timers;
@@ -71,8 +69,10 @@ enum ProactorCommands
 
 	CMD_ADD_RECV_WATCHER,
 	CMD_ADD_RECV_T_WATCHER,
+	CMD_CANCEL_RECV_WATCHER,
 	CMD_ADD_SEND_WATCHER,
-	CMD_ADD_SEND_T_WATCHER
+	CMD_ADD_SEND_T_WATCHER,
+	CMD_CANCEL_SEND_WATCHER,
 };
 
 static uint64_t timeNow()
@@ -163,7 +163,32 @@ static void proactorReorderTimer(struct Proactor* pr, struct Timer* t)
 }
 
 #define READ_ARG(D,P) \
-	do { memcpy(&D,P,sizeof(D)); P += sizeof(D); } while (0)
+	do { P = (void*)(((uintptr_t)P + _Alignof(D) - 1) & ~(_Alignof(D) - 1)); \
+		memcpy(&D,P,sizeof(D)); \
+		P += sizeof(D); \
+	} while (0)
+
+#define WRITE_ARG(S,P) \
+	do { P = (void*)(((uintptr_t)P + _Alignof(S) - 1) & ~(_Alignof(S) - 1)); \
+		memcpy(P,&S,sizeof(S)); \
+		P += sizeof(S); \
+	} while (0)
+
+static void proactorWriteControl(struct Proactor* pr, const unsigned char* msg)
+{
+#if defined(_WIN32)
+	int w = send(pr->m_control_fd,(void*)msg,msg[1],0);
+#else
+	ssize_t w;
+	do
+	{
+		w = send(pr->m_control_fd,msg,msg[1],0);
+	}
+	while (w == -1 && errno == EINTR);
+#endif
+	if (w != msg[1])
+		abort();
+}
 
 static struct Timer* proactorAddTimer(struct Proactor* pr, unsigned char* p)
 {
@@ -178,8 +203,45 @@ static struct Timer* proactorAddTimer(struct Proactor* pr, unsigned char* p)
 	READ_ARG(t->m_repeat,p);
 	READ_ARG(t->m_param_len,p);
 	if (t->m_param_len)
-		memcpy(&t->m_param,p,t->m_param_len);
+		memcpy(t->m_param,p,t->m_param_len);
 	return t;
+}
+
+static unsigned char* proactorSendAddTimer(struct Proactor* pr, unsigned char* p, unsigned int id, uint32_t timeout, uint32_t repeat, task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
+{
+	uint64_t deadline = timeNow() + timeout;
+	WRITE_ARG(deadline,p);
+	WRITE_ARG(fn,p);
+	WRITE_ARG(id,p);
+	WRITE_ARG(pt,p);
+	WRITE_ARG(repeat,p);
+	WRITE_ARG(param_len,p);
+	if (param_len)
+	{
+		memcpy(p,param,param_len);
+		p += param_len;
+	}
+
+	return p;
+}
+
+unsigned int proactor_add_timer(proactor_t ph, uint32_t timeout, uint32_t repeat, task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
+{
+	struct Proactor* pr = (struct Proactor*)ph;
+
+	unsigned int id = 0;
+	while (id == 0)
+		id = atomic_fetch_add(&pr->m_next_timer_id,1);
+
+	unsigned char msg[sizeof(struct Timer) + 8] = { CMD_ADD_TIMER };
+	static_assert(sizeof(msg) < 256, "Message buffer size > 255");
+
+	unsigned char* p = proactorSendAddTimer(pr,msg + 2,id,timeout,repeat,pt,fn,param,param_len);
+
+	msg[1] = (p - msg);
+	assert(p - msg <= sizeof(msg));
+	proactorWriteControl(pr,msg);
+	return id;
 }
 
 static void proactorCancelTimer(struct Proactor* pr, unsigned char* p)
@@ -206,6 +268,20 @@ static void proactorCancelTimer(struct Proactor* pr, unsigned char* p)
 	}
 }
 
+void proactor_cancel_timer(proactor_t ph, unsigned int timer_id)
+{
+	struct Proactor* pr = (struct Proactor*)ph;
+
+	unsigned char msg[16] = { CMD_CANCEL_TIMER };
+	unsigned char* p = msg + 2;
+
+	WRITE_ARG(timer_id,p);
+
+	msg[1] = (p - msg);
+	assert(p - msg <= sizeof(msg));
+	proactorWriteControl(pr,msg);
+}
+
 static void proactorUpdateTimer(struct Proactor* pr, unsigned char* p)
 {
 	unsigned int id;
@@ -228,102 +304,235 @@ static void proactorUpdateTimer(struct Proactor* pr, unsigned char* p)
 	}
 }
 
-static size_t proactorAddWatcher(struct Proactor* pr, socket_t fd)
+void proactor_update_timer(proactor_t ph, unsigned int timer_id, uint32_t timeout, uint32_t repeat)
 {
+	struct Proactor* pr = (struct Proactor*)ph;
+
+	unsigned char msg[32] = { CMD_UPDATE_TIMER };
+	unsigned char* p = msg + 2;
+
+	WRITE_ARG(timer_id,p);
+	uint64_t deadline = timeNow() + timeout;
+	WRITE_ARG(deadline,p);
+	WRITE_ARG(repeat,p);
+
+	msg[1] = (p - msg);
+	assert(p - msg <= sizeof(msg));
+	proactorWriteControl(pr,msg);
+}
+
+static struct Watcher* proactorAddWatcher(struct Proactor* pr, unsigned char** p, unsigned int flags)
+{
+	socket_t fd;
+	READ_ARG(fd,p);
+
 	size_t i = 1;
 	for (; i < pr->m_n_poll_fds; ++i)
 	{
 		if (pr->m_poll_fds[i].fd == fd)
-			return i;
+			break;
 	}
 
-	if (i == pr->m_poll_alloc_size)
+	if (i == pr->m_n_poll_fds)
 	{
-		// Realloc
-		size_t new_size = pr->m_poll_alloc_size * 2;
-		pollfd_t* new_poll_fds = realloc(pr->m_poll_fds,new_size * sizeof(pollfd_t));
-		if (!new_poll_fds)
-			abort();
-		pr->m_poll_fds = new_poll_fds;
+		if (i == pr->m_poll_alloc_size)
+		{
+			// Realloc
+			size_t new_size = pr->m_poll_alloc_size * 2;
+			struct pollfd* new_poll_fds = realloc(pr->m_poll_fds,new_size * sizeof(struct pollfd));
+			if (!new_poll_fds)
+				abort();
+			pr->m_poll_fds = new_poll_fds;
 
-		struct Watcher* new_watchers = realloc(pr->m_watchers,new_size * sizeof(struct Watcher) * 2);
-		if (!new_watchers)
-			abort();
-		pr->m_watchers = new_watchers;
-		pr->m_poll_alloc_size = new_size;
+			struct Watcher* new_watchers = realloc(pr->m_watchers,new_size * sizeof(struct Watcher) * 2);
+			if (!new_watchers)
+				abort();
+			pr->m_watchers = new_watchers;
+			pr->m_poll_alloc_size = new_size;
+		}
+
+		++pr->m_n_poll_fds;
+		pr->m_poll_fds[i].fd = fd;
+		pr->m_poll_fds[i].events = 0;
 	}
 
-	++pr->m_n_poll_fds;
-	pr->m_poll_fds[i].fd = fd;
-	pr->m_poll_fds[i].events = 0;
-
-	return i;
-}
-
-static struct Watcher* proactorAddRecvWatcher(struct Proactor* pr, unsigned char* p)
-{
-	socket_t fd;
-	READ_ARG(fd,p);
-
-	size_t i = proactorAddWatcher(pr,fd);
-
-	assert(!(pr->m_poll_fds[i].events & POLLRDNORM));
-
-	pr->m_poll_fds[i].events |= POLLRDNORM;
+	assert(!(pr->m_poll_fds[i].events & flags));
+	pr->m_poll_fds[i].events |= flags;
 
 	struct Watcher* w = &pr->m_watchers[i * 2];
+	if (flags & POLLWRNORM)
+		++w;
+
 	w->m_timer = NULL;
 	READ_ARG(w->m_parent,p);
 	READ_ARG(w->m_fn,p);
 	READ_ARG(w->m_param_len,p);
 	if (w->m_param_len)
-		memcpy(&w->m_param,p,w->m_param_len);
+		memcpy(w->m_param,p,w->m_param_len);
 
 	return w;
 }
 
-static void proactorAddRecvTWatcher(struct Proactor* pr, unsigned char* p)
+static unsigned char* proactorSendAddWatcher(struct Proactor* pr, unsigned char* p, socket_t fd, task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
 {
-	struct Watcher* watcher = proactorAddRecvWatcher(pr,p);
+	WRITE_ARG(fd,p);
+	WRITE_ARG(pt,p);
+	WRITE_ARG(fn,p);
+	WRITE_ARG(param_len,p);
+	if (param_len)
+	{
+		memcpy(p,param,param_len);
+		p += param_len;
+	}
+
+	return p;
+}
+
+static void proactorSendSimpleAddWatcher(enum ProactorCommands op_code, proactor_t ph, socket_t fd, task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
+{
+	struct Proactor* pr = (struct Proactor*)ph;
+
+	unsigned char msg[sizeof(struct Watcher) + 8] = { op_code };
+	static_assert(sizeof(msg) < 256, "Message buffer size > 255");
+
+	unsigned char* p = proactorSendAddWatcher(pr,msg + 2,fd,pt,fn,param,param_len);
+
+	msg[1] = (p - msg);
+	assert(p - msg <= sizeof(msg));
+	proactorWriteControl(pr,msg);
+}
+
+void proactor_add_recv_watcher(proactor_t ph, socket_t fd, task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
+{
+	proactorSendSimpleAddWatcher(CMD_ADD_RECV_WATCHER,ph,fd,pt,fn,param,param_len);
+}
+
+void proactor_add_send_watcher(proactor_t ph, socket_t fd, task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
+{
+	proactorSendSimpleAddWatcher(CMD_ADD_SEND_WATCHER,ph,fd,pt,fn,param,param_len);
+}
+
+static void proactorAddTimedWatcher(struct Proactor* pr, unsigned char* p, unsigned int flags)
+{
+	struct Watcher* watcher = proactorAddWatcher(pr,&p,flags);
+
 	watcher->m_timer = proactorAddTimer(pr,p);
+	watcher->m_timer->m_param_len = watcher->m_param_len;
+	if (watcher->m_param_len)
+		memcpy(watcher->m_timer->m_param,watcher->m_param,watcher->m_param_len);
+
 	watcher->m_timer->m_watcher = watcher;
 }
 
-static struct Watcher* proactorAddSendWatcher(struct Proactor* pr, unsigned char* p)
+static void proactorSendTimedAddWatcher(enum ProactorCommands op_code, proactor_t ph, socket_t fd, uint32_t timeout, task_t pt, task_fn_t io_fn, task_fn_t tmo_fn, const void* param, unsigned int param_len)
+{
+	struct Proactor* pr = (struct Proactor*)ph;
+
+	unsigned char msg[sizeof(struct Watcher) + sizeof(struct Timer) + 16 - TASK_PARAM_MAX] = { op_code };
+	static_assert(sizeof(msg) < 256, "Message buffer size > 255");
+
+	unsigned char* p = proactorSendAddWatcher(pr,msg + 2,fd,pt,io_fn,param,param_len);
+
+	unsigned int id = 0;
+	while (id == 0)
+		id = atomic_fetch_add(&pr->m_next_timer_id,1);
+
+	p = proactorSendAddTimer(pr,p,id,timeout,0,pt,tmo_fn,NULL,0);
+
+	msg[1] = (p - msg);
+	assert(p - msg <= sizeof(msg));
+	proactorWriteControl(pr,msg);
+}
+
+void proactor_add_timed_recv_watcher(proactor_t ph, socket_t fd, uint32_t timeout, task_t pt, task_fn_t io_fn, task_fn_t tmo_fn, const void* param, unsigned int param_len)
+{
+	proactorSendTimedAddWatcher(CMD_ADD_RECV_T_WATCHER,ph,fd,timeout,pt,io_fn,tmo_fn,param,param_len);
+}
+
+void proactor_add_timed_send_watcher(proactor_t ph, socket_t fd, uint32_t timeout, task_t pt, task_fn_t io_fn, task_fn_t tmo_fn, const void* param, unsigned int param_len)
+{
+	proactorSendTimedAddWatcher(CMD_ADD_SEND_T_WATCHER,ph,fd,timeout,pt,io_fn,tmo_fn,param,param_len);
+}
+
+static void proactorRemoveWatcher(struct Proactor* pr, size_t i)
+{
+	// Swap array member with last member
+	if (--pr->m_n_poll_fds > 1 && i < pr->m_n_poll_fds)
+	{
+		struct Watcher* w = &pr->m_watchers[i*2];
+
+		pr->m_poll_fds[i] = pr->m_poll_fds[pr->m_n_poll_fds];
+		memcpy(w,&pr->m_watchers[pr->m_n_poll_fds*2],2 * sizeof(struct Watcher));
+
+		// Fix up timers
+		if (w->m_timer)
+			w->m_timer->m_watcher = w;
+
+		++w;
+		if (w->m_timer)
+			w->m_timer->m_watcher = w;
+	}
+}
+
+static void proactorCancelWatcher(struct Proactor* pr, unsigned char* p, unsigned int flags)
 {
 	socket_t fd;
 	READ_ARG(fd,p);
 
-	size_t i = proactorAddWatcher(pr,fd);
+	size_t i = 1;
+	for (; i < pr->m_n_poll_fds; ++i)
+	{
+		if (pr->m_poll_fds[i].fd == fd)
+		{
+			if (pr->m_poll_fds[i].events & flags)
+			{
+				pr->m_poll_fds[i].events &= ~flags;
 
-	assert(!(pr->m_poll_fds[i].events & POLLWRNORM));
+				struct Watcher* watcher = &pr->m_watchers[i * 2];
+				if (flags & POLLWRNORM)
+					++watcher;
 
-	pr->m_poll_fds[i].events |= POLLWRNORM;
+				if (watcher->m_timer)
+					watcher->m_timer->m_deadline = 0;
 
-	struct Watcher* w = &pr->m_watchers[i * 2 + 1];
-	w->m_timer = NULL;
-	READ_ARG(w->m_parent,p);
-	READ_ARG(w->m_fn,p);
-	READ_ARG(w->m_param_len,p);
-	if (w->m_param_len)
-		memcpy(&w->m_param,p,w->m_param_len);
-
-	return w;
+				if (!pr->m_poll_fds[i].events)
+					proactorRemoveWatcher(pr,i);
+			}
+			break;
+		}
+	}
 }
 
-static void proactorAddSendTWatcher(struct Proactor* pr, unsigned char* p)
+void proactorSendCancelWatcher(enum ProactorCommands op_code, proactor_t ph, socket_t fd)
 {
-	struct Watcher* watcher = proactorAddSendWatcher(pr,p);
-	watcher->m_timer = proactorAddTimer(pr,p);
-	watcher->m_timer->m_watcher = watcher;
+	struct Proactor* pr = (struct Proactor*)ph;
+
+	unsigned char msg[32] = { op_code };
+	unsigned char* p = msg + 2;
+
+	WRITE_ARG(fd,p);
+
+	msg[1] = (p - msg);
+	assert(p - msg <= sizeof(msg));
+	proactorWriteControl(pr,msg);
 }
 
-static void proactorControl(struct Proactor* pr)
+void proactor_cancel_recv_watcher(proactor_t ph, socket_t fd)
+{
+	proactorSendCancelWatcher(CMD_CANCEL_SEND_WATCHER,ph,fd);
+}
+
+void proactor_cancel_send_watcher(proactor_t ph, socket_t fd)
+{
+	proactorSendCancelWatcher(CMD_CANCEL_SEND_WATCHER,ph,fd);
+}
+
+static void proactorReadControl(struct Proactor* pr)
 {
 	for (;;)
 	{
 #if defined(_WIN32)
-		int r = recv(pr->m_poll_fds[0].fd,(char*)pr->m_control_buf + pr->m_control_offset,sizeof(pr->m_control_buf) - pr->m_control_offset,0);
+		int r = recv(pr->m_poll_fds[0].fd,(void*)pr->m_control_buf + pr->m_control_offset,sizeof(pr->m_control_buf) - pr->m_control_offset,0);
 		if (r == -1 && WSAGetLastError() == WSAEWOULDBLOCK)
 			break;
 #else
@@ -368,19 +577,33 @@ static void proactorControl(struct Proactor* pr)
 				break;
 
 			case CMD_ADD_RECV_WATCHER:
-				proactorAddRecvWatcher(pr,&pr->m_control_buf[p+2]);
-				break;
+				{
+					unsigned char* pp = &pr->m_control_buf[p+2];
+					proactorAddWatcher(pr,&pp,POLLRDNORM);
+					break;
+				}
 
 			case CMD_ADD_RECV_T_WATCHER:
-				proactorAddRecvTWatcher(pr,&pr->m_control_buf[p+2]);
+				proactorAddTimedWatcher(pr,&pr->m_control_buf[p+2],POLLRDNORM);
+				break;
+
+			case CMD_CANCEL_RECV_WATCHER:
+				proactorCancelWatcher(pr,&pr->m_control_buf[p+2],POLLRDNORM);
 				break;
 
 			case CMD_ADD_SEND_WATCHER:
-				proactorAddSendWatcher(pr,&pr->m_control_buf[p+2]);
-				break;
+				{
+					unsigned char* pp = &pr->m_control_buf[p+2];
+					proactorAddWatcher(pr,&pp,POLLWRNORM);
+					break;
+				}
 
 			case CMD_ADD_SEND_T_WATCHER:
-				proactorAddSendTWatcher(pr,&pr->m_control_buf[p+2]);
+				proactorAddTimedWatcher(pr,&pr->m_control_buf[p+2],POLLWRNORM);
+				break;
+
+			case CMD_CANCEL_SEND_WATCHER:
+				proactorCancelWatcher(pr,&pr->m_control_buf[p+2],POLLWRNORM);
 				break;
 
 			default:
@@ -451,56 +674,48 @@ static void proactorRun(task_t task, const void* param)
 		int fds = proactorPoll(pr,timeout);
 
 		// Check watchers
-		for (i = 0; i < pr->m_n_poll_fds && fds > 0;)
+		for (i = 0; i < pr->m_n_poll_fds && fds > 0; ++i)
 		{
-			if (!pr->m_poll_fds[i].revents)
-				++i;
-			else
+			if (pr->m_poll_fds[i].revents)
 			{
 				--fds;
 				if (i == 0)
 				{
 					// Do the message pipe i/o
-					proactorControl(pr);
-					++i;
+					proactorReadControl(pr);
+					continue;
 				}
-				else
+
+				struct Watcher* rd_watcher = &pr->m_watchers[i*2];
+				if ((pr->m_poll_fds[i].events & POLLRDNORM) && (pr->m_poll_fds[i].revents & (POLLERR | POLLHUP | POLLRDNORM)))
 				{
-					struct Watcher* rd_watcher = &pr->m_watchers[i*2];
-					if ((pr->m_poll_fds[i].events & POLLRDNORM) && (pr->m_poll_fds[i].revents & (POLLERR | POLLHUP | POLLRDNORM)))
-					{
-						// Run the read task
-						task_run(NULL,rd_watcher->m_parent,rd_watcher->m_fn,rd_watcher->m_param,rd_watcher->m_param_len);
+					// Run the read task
+					task_run(NULL,rd_watcher->m_parent,rd_watcher->m_fn,rd_watcher->m_param,rd_watcher->m_param_len);
 
-						if (rd_watcher->m_timer)
-							rd_watcher->m_timer->m_deadline = 0;
+					if (rd_watcher->m_timer)
+						rd_watcher->m_timer->m_deadline = 0;
 
-						pr->m_poll_fds[i].events &= ~POLLRDNORM;
-					}
+					pr->m_poll_fds[i].events &= ~POLLRDNORM;
+				}
 
-					if ((pr->m_poll_fds[i].events & POLLWRNORM) && (pr->m_poll_fds[i].revents & (POLLERR | POLLWRNORM)))
-					{
-						// Run the write task
-						struct Watcher* wr_watcher = rd_watcher+1;
-						task_run(NULL,wr_watcher->m_parent,wr_watcher->m_fn,wr_watcher->m_param,wr_watcher->m_param_len);
+				if ((pr->m_poll_fds[i].events & POLLWRNORM) && (pr->m_poll_fds[i].revents & (POLLERR | POLLWRNORM)))
+				{
+					// Run the write task
+					struct Watcher* wr_watcher = rd_watcher+1;
+					task_run(NULL,wr_watcher->m_parent,wr_watcher->m_fn,wr_watcher->m_param,wr_watcher->m_param_len);
 
-						if (wr_watcher->m_timer)
-							wr_watcher->m_timer->m_deadline = 0;
+					if (wr_watcher->m_timer)
+						wr_watcher->m_timer->m_deadline = 0;
 
-						pr->m_poll_fds[i].events &= ~POLLWRNORM;
-					}
+					pr->m_poll_fds[i].events &= ~POLLWRNORM;
+				}
 
-					if (!pr->m_poll_fds[i].events)
-					{
-						// Swap array member with last member
-						if (--pr->m_n_poll_fds > 1 && i < pr->m_n_poll_fds)
-						{
-							memcpy(&pr->m_watchers[i*2],&pr->m_watchers[pr->m_n_poll_fds*2],2 * sizeof(struct Watcher));
-							pr->m_poll_fds[i] = pr->m_poll_fds[pr->m_n_poll_fds];
-						}
-					}
-					else
-						++i;
+				if (!pr->m_poll_fds[i].events)
+				{
+					proactorRemoveWatcher(pr,i);
+
+					// Check i again
+					--i;
 				}
 			}
 		}
@@ -559,7 +774,7 @@ proactor_t proactor_create(task_t parent)
 
 		pr->m_poll_alloc_size = 4;
 		pr->m_n_poll_fds = 1;
-		pr->m_poll_fds = malloc(pr->m_poll_alloc_size * sizeof(pollfd_t));
+		pr->m_poll_fds = malloc(pr->m_poll_alloc_size * sizeof(struct pollfd));
 		if (!pr->m_poll_fds)
 			err = errno;
 		else
