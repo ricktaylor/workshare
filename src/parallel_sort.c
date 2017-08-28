@@ -2,20 +2,6 @@
 #include "common.h"
 #include "task.h"
 
-#if defined(__MINGW32__)
-static inline int sort(void *ptr, size_t count, size_t size, int (*comp)(const void *, const void *, void *), void *context)
-{
-	qsort_s(ptr,count,size,(int (__cdecl *)(void *,const void *,const void *))comp,context);
-	return 0;
-}
-#else
-static inline int sort(void *ptr, size_t count, size_t size, int (*comp)(const void *, const void *, void *), void *context)
-{
-	qsort_r(ptr,count,size,comp,context);
-	return 0;
-}
-#endif
-
 typedef int (*task_parallel_sort_fn_t)(const void*,const void*,void*);
 
 struct ParaSort
@@ -32,7 +18,13 @@ static void parallelSortSplit(task_t parent, const void* p)
 	const struct ParaSort* ps = p;
 
 	if (ps->elem_count * ps->elem_size <= 32 * 1024)
-		sort(ps->elems,ps->elem_count,ps->elem_size,ps->fn,ps->param);
+	{
+#if defined(__MINGW32__)
+		qsort_s(ps->elems,ps->elem_count,ps->elem_size,(int (__cdecl *)(void *,const void *,const void *))ps->fn,ps->param);
+#else
+		qsort_r(ps->elems,ps->elem_count,ps->elem_size,ps->fn,ps->param);
+#endif
+	}
 	else
 	{
 		// try to split on 32K boundaries
