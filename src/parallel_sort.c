@@ -27,8 +27,7 @@ static void parallelSortSplit(task_t parent, const void* p)
 	}
 	else
 	{
-		// try to split on 32K boundaries
-		size_t split = (ps->elem_count * ps->elem_size) / (32 * 1024 * 2);
+		size_t split = ps->elem_count / 2;
 		struct ParaSort sub_task_data[2] =
 		{
 			{
