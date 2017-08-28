@@ -76,11 +76,10 @@ struct Scheduler
 static tss_t s_thread_info;
 static once_flag s_task_once = ONCE_FLAG_INIT;
 
-static int schedulerSignal(struct Scheduler* s)
+static void schedulerSignal(struct Scheduler* s)
 {
 	int old_status = atomic_load_explicit(&s->m_status,memory_order_relaxed);
 	int new_status;
-	int err = 0;
 
 	do
 	{
@@ -89,17 +88,19 @@ static int schedulerSignal(struct Scheduler* s)
 	while (!atomic_compare_exchange_weak_explicit(&s->m_status,&old_status,new_status,memory_order_release,memory_order_relaxed));
 
 	if (old_status < 0)
-		err = sema_signal(&s->m_sema,1);
-
-	return err;
+	{
+		if (sema_signal(&s->m_sema,1) != thrd_success)
+			abort();
+	}
 }
 
-static int schedulerWait(struct Scheduler* s)
+static void schedulerWait(struct Scheduler* s)
 {
-	int err = 0;
 	if (atomic_fetch_sub_explicit(&s->m_status,1,memory_order_acquire) < 1)
-		err = sema_wait(&s->m_sema);
-	return err;
+	{
+		if (sema_wait(&s->m_sema) != thrd_success)
+			abort();
+	}
 }
 
 // See http://www.di.ens.fr/~zappa/readings/ppopp13.pdf for details
@@ -221,8 +222,7 @@ static int taskRunNext(struct ThreadInfo* info)
 		taskFinish(task);
 		return 1;
 	}
-	else
-		return 0;
+	return 0;
 }
 
 static struct Task* taskAllocate(struct ThreadInfo* info)
@@ -285,15 +285,21 @@ void task_join(task_t handle)
 		taskRunNext(info);
 }
 
-int task_run(task_t* t, task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
+task_t task_run(task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
 {
 	if (!fn || param_len > TASK_PARAM_MAX)
-		return EINVAL;
+	{
+		errno = EINVAL;
+		return NULL;
+	}
 	
 	struct ThreadInfo* info = get_thread_info();
 	struct Task* parent = NULL;
 	if (pt && !(parent = taskDeref(info,pt)))
-		return EINVAL;
+	{
+		errno = EINVAL;
+		return NULL;
+	}
 	
 	struct Task* task = NULL;
 	while (!(task = taskAllocate(info)))
@@ -306,9 +312,6 @@ int task_run(task_t* t, task_t pt, task_fn_t fn, const void* param, unsigned int
 	memcpy(task->m_data,param,param_len);
 	task->m_parent = parent;
 	
-	if (t)
-		*t = task->m_handle;
-	
 	if (task->m_parent)
 		atomic_fetch_add_explicit(&parent->m_active,1,memory_order_relaxed);
 	
@@ -318,7 +321,9 @@ int task_run(task_t* t, task_t pt, task_fn_t fn, const void* param, unsigned int
 		taskRunNext(info);
 	}
 
-	return schedulerSignal(info->m_scheduler);
+	schedulerSignal(info->m_scheduler);
+
+	return task->m_handle;
 }
 
 static int schedulerThread(void* p)
@@ -336,39 +341,6 @@ static int schedulerThread(void* p)
 	return 0;
 }
 
-static int schedulerThreadInit(struct ThreadInfo* info)
-{
-	int err = 0;
-	
-	info->m_rng = (uintptr_t)info;
-	info->m_close = 0;
-	info->m_bottom = info->m_top = 0;
-	info->m_free_task = 0;
-		
-	info->m_pool = aligned_alloc(64,TASK_COUNT * TASK_SIZE);
-	if (!info->m_pool)
-		err = errno;
-	else
-	{
-		memset(info->m_pool,0,TASK_COUNT * TASK_SIZE);
-		
-		info->m_deque = calloc(TASK_COUNT,sizeof(struct Task*));
-		if (!info->m_deque)
-			err = errno;
-		
-		if (err)
-			aligned_free(info->m_pool);
-	}
-	
-	return err;
-}
-
-static void schedulerThreadTerm(struct ThreadInfo* info)
-{
-	free(info->m_deque);
-	aligned_free(info->m_pool);
-}
-
 void scheduler_destroy(scheduler_t sc)
 {
 	struct Scheduler* s = (struct Scheduler*)sc;
@@ -379,16 +351,21 @@ void scheduler_destroy(scheduler_t sc)
 		for (unsigned int i = 0; i < s->m_threads; ++i)
 			s->m_thread_info[i].m_close = 1;
 
-		sema_signal(&s->m_sema,s->m_threads);
+		if (sema_signal(&s->m_sema,s->m_threads) != thrd_success)
+			abort();
 
 		while (s->m_threads-- > 0)
 		{
 			info = &s->m_thread_info[s->m_threads];
 
 			if (!thrd_equal(info->m_thread_id,thrd_current()))
-				thrd_join(info->m_thread_id,NULL);
+			{
+				if (thrd_join(info->m_thread_id,NULL) != thrd_success)
+					abort();
+			}
 
-			schedulerThreadTerm(info);
+			free(info->m_deque);
+			aligned_free(info->m_pool);
 		}
 		
 		sema_destroy(&s->m_sema);
@@ -411,48 +388,44 @@ scheduler_t scheduler_create(unsigned int threads)
 
 	call_once(&s_task_once,&init_tss);
 	
-	int err = 0;
 	struct Scheduler* s = malloc(sizeof(struct Scheduler) + (threads * sizeof(struct ThreadInfo)));
 	if (!s)
-		err = errno;
-	else
+		abort();
+
+	atomic_store(&s->m_status,0);
+
+	if (sema_init(&s->m_sema,0) != thrd_success)
+		abort();
+
+	for (s->m_threads = 0; s->m_threads  < threads; ++s->m_threads)
 	{
-		atomic_store(&s->m_status,0);
+		// Init ThreadInfo
+		struct ThreadInfo* info = &s->m_thread_info[s->m_threads];
 
-		err = sema_init(&s->m_sema,0);
+		info->m_scheduler = s;
+		info->m_rng = xorshift((uintptr_t)info);
+		info->m_close = 0;
+		info->m_bottom = info->m_top = 0;
+		info->m_free_task = 0;
 
-		for (s->m_threads = 0; !err && s->m_threads  < threads; ++s->m_threads)
+		info->m_pool = aligned_alloc(64,TASK_COUNT * TASK_SIZE);
+		if (!info->m_pool)
+			abort();
+
+		memset(info->m_pool,0,TASK_COUNT * TASK_SIZE);
+
+		info->m_deque = calloc(TASK_COUNT,sizeof(struct Task*));
+		if (!info->m_deque)
+			abort();
+
+		if (s->m_threads == 0)
 		{
-			// Init ThreadInfo
-			struct ThreadInfo* info = &s->m_thread_info[s->m_threads];
-
-			info->m_scheduler = s;
-
-			err = schedulerThreadInit(info);
-			if (!err)
-			{
-				if (s->m_threads == 0)
-				{
-					info->m_thread_id = thrd_current();
-					tss_set(s_thread_info,info);
-				}
-				else if (thrd_create(&info->m_thread_id,&schedulerThread,info) != thrd_success)
-					err = -1;
-				
-				if (err)
-					schedulerThreadTerm(info);
-			}
+			info->m_thread_id = thrd_current();
+			tss_set(s_thread_info,info);
 		}
-
-		if (err)
-		{
-			scheduler_destroy((scheduler_t)s);
-			s = NULL;
-		}
+		else if (thrd_create(&info->m_thread_id,&schedulerThread,info) != thrd_success)
+			abort();
 	}
 	
-	if (err)
-		errno = err;
-
 	return (scheduler_t)s;
 }

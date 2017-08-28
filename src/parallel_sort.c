@@ -56,47 +56,26 @@ static void parallelSortSplit(task_t parent, const void* p)
 		};
 
 		task_t sub_tasks[2] = {0};
-		int err = task_run(&sub_tasks[0],NULL,&parallelSortSplit,&sub_task_data[0],sizeof(struct ParaSort));
-		if (!err)
-		{
-			err = task_run(&sub_tasks[1],NULL,&parallelSortSplit,&sub_task_data[1],sizeof(struct ParaSort));
-			if (!err)
-			{
-				task_join(sub_tasks[1]);
-				task_join(sub_tasks[0]);
-			}
-		}
+		sub_tasks[0] = task_run(parent,&parallelSortSplit,&sub_task_data[0],sizeof(struct ParaSort));
+		sub_tasks[1] = task_run(parent,&parallelSortSplit,&sub_task_data[1],sizeof(struct ParaSort));
 
-		if (!err)
-		{
-			// See: http://www.drdobbs.com/parallel/parallel-in-place-merge/240008783?pgno=4
+		task_join(sub_tasks[1]);
+		task_join(sub_tasks[0]);
 
-
-		}
+		// Now merge
+		// See: http://www.drdobbs.com/parallel/parallel-in-place-merge/240008783?pgno=4
 	}
 }
 
-
-int task_parallel_sort(void* elems, size_t elem_count, size_t elem_size, task_parallel_sort_fn_t fn, void* param)
+task_t task_parallel_sort(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_sort_fn_t fn, void* param)
 {
-	// Check for L1 cache size
-	int err = 0;
-	if (elem_count * elem_size <= 32 * 1024)
-		err = sort(elems,elem_count,elem_size,fn,param);
-	else
+	struct ParaSort task_data =
 	{
-		struct ParaSort task_data =
-		{
-			.elems = elems,
-			.elem_count = elem_count,
-			.elem_size = elem_size,
-			.fn = fn,
-			.param = param
-		};
-		task_t task;
-		err = task_run(&task,NULL,&parallelSortSplit,&task_data,sizeof(struct ParaSort));
-		if (!err)
-			task_join(task);
-	}
-	return err;
+		.elems = elems,
+		.elem_count = elem_count,
+		.elem_size = elem_size,
+		.fn = fn,
+		.param = param
+	};
+	return task_run(pt,&parallelSortSplit,&task_data,sizeof(struct ParaSort));
 }

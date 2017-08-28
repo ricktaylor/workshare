@@ -653,7 +653,7 @@ static void proactorRun(task_t task, const void* param)
 		{
 			if (pr->m_timers[i].m_deadline)
 			{
-				task_run(NULL,pr->m_timers[i].m_parent,pr->m_timers[i].m_fn,pr->m_timers[i].m_param,pr->m_timers[i].m_param_len);
+				task_run(pr->m_timers[i].m_parent,pr->m_timers[i].m_fn,pr->m_timers[i].m_param,pr->m_timers[i].m_param_len);
 
 				if (pr->m_timers[i].m_repeat != 0)
 				{
@@ -690,7 +690,7 @@ static void proactorRun(task_t task, const void* param)
 				if ((pr->m_poll_fds[i].events & POLLRDNORM) && (pr->m_poll_fds[i].revents & (POLLERR | POLLHUP | POLLRDNORM)))
 				{
 					// Run the read task
-					task_run(NULL,rd_watcher->m_parent,rd_watcher->m_fn,rd_watcher->m_param,rd_watcher->m_param_len);
+					task_run(rd_watcher->m_parent,rd_watcher->m_fn,rd_watcher->m_param,rd_watcher->m_param_len);
 
 					if (rd_watcher->m_timer)
 						rd_watcher->m_timer->m_deadline = 0;
@@ -702,7 +702,7 @@ static void proactorRun(task_t task, const void* param)
 				{
 					// Run the write task
 					struct Watcher* wr_watcher = rd_watcher+1;
-					task_run(NULL,wr_watcher->m_parent,wr_watcher->m_fn,wr_watcher->m_param,wr_watcher->m_param_len);
+					task_run(wr_watcher->m_parent,wr_watcher->m_fn,wr_watcher->m_param,wr_watcher->m_param_len);
 
 					if (wr_watcher->m_timer)
 						wr_watcher->m_timer->m_deadline = 0;
@@ -759,67 +759,38 @@ static int proactorSocketPair(socket_t* fd1, socket_t* fd2)
 
 proactor_t proactor_create(task_t parent)
 {
-	int err = 0;
 	struct Proactor* pr = malloc(sizeof(struct Proactor));
 	if (!pr)
-		err = errno;
-	else
-	{
-		pr->m_task = NULL;
-		pr->m_timer_alloc_size = 0;
-		pr->m_timers = NULL;
-		pr->m_timer_count = 0;
-		pr->m_control_offset = 0;
-		atomic_store(&pr->m_next_timer_id,1);
+		abort();
 
-		pr->m_poll_alloc_size = 4;
-		pr->m_n_poll_fds = 1;
-		pr->m_poll_fds = malloc(pr->m_poll_alloc_size * sizeof(struct pollfd));
-		if (!pr->m_poll_fds)
-			err = errno;
-		else
-		{
-			pr->m_watchers = malloc(pr->m_poll_alloc_size * 2 * sizeof(struct Watcher));
-			if (!pr->m_watchers)
-				err = errno;
-			else
-			{
-				// Create socket_pair
-				socket_t control_fd = -1;
-				err = proactorSocketPair(&pr->m_control_fd,&control_fd);
-				if (!err)
-				{
-					// Add control i/o watcher
-					pr->m_poll_fds[0].fd = control_fd;
-					pr->m_poll_fds[0].events = POLLRDNORM;
+	pr->m_task = NULL;
+	pr->m_timer_alloc_size = 0;
+	pr->m_timers = NULL;
+	pr->m_timer_count = 0;
+	pr->m_control_offset = 0;
+	atomic_store(&pr->m_next_timer_id,1);
 
-					// Kick off a task to run it
-					err = task_run(&pr->m_task,parent,&proactorRun,&pr,sizeof(pr));
-					if (err)
-					{
-						// Close socket_pair
-						closesocket(pr->m_control_fd);
-						closesocket(control_fd);
-					}
-				}
+	pr->m_poll_alloc_size = 4;
+	pr->m_n_poll_fds = 1;
+	pr->m_poll_fds = malloc(pr->m_poll_alloc_size * sizeof(struct pollfd));
+	if (!pr->m_poll_fds)
+		abort();
 
-				if (err)
-					free(pr->m_watchers);
-			}
+	pr->m_watchers = malloc(pr->m_poll_alloc_size * 2 * sizeof(struct Watcher));
+	if (!pr->m_watchers)
+		abort();
 
-			if (err)
-				free(pr->m_poll_fds);
-		}
+	// Create socket_pair
+	socket_t control_fd = -1;
+	if (proactorSocketPair(&pr->m_control_fd,&control_fd) != 0)
+		abort();
 
-		if (err)
-		{
-			free(pr);
-			pr = NULL;
-		}
-	}
+	// Add control i/o watcher
+	pr->m_poll_fds[0].fd = control_fd;
+	pr->m_poll_fds[0].events = POLLRDNORM;
 
-	if (err)
-		errno = err;
+	// Kick off a task to run it
+	pr->m_task = task_run(parent,&proactorRun,&pr,sizeof(pr));
 
 	return (proactor_t)pr;
 }

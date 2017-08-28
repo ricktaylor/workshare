@@ -44,11 +44,12 @@ static inline int thrd_join(thrd_t thr, int* res)
 		return thrd_error;
 
 	DWORD dres = 0;
-	if (!GetExitCodeThread(thr,&dres))
+	if (!GetExitCodeThread(thr,&dres) && res)
 		return thrd_error;
 
 	if (res)
 		*res = dres;
+
 	return thrd_success;
 }
 

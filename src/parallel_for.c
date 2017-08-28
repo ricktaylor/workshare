@@ -39,13 +39,12 @@ static void parallelForSplit(task_t parent, const void* p)
 			}
 		};
 
-		int err = task_run(NULL,parent,&parallelForSplit,&sub_task_data[0],sizeof(struct ParaFor));
-		if (!err)
-			task_run(NULL,parent,&parallelForSplit,&sub_task_data[1],sizeof(struct ParaFor));
+		task_run(parent,&parallelForSplit,&sub_task_data[0],sizeof(struct ParaFor));
+		task_run(parent,&parallelForSplit,&sub_task_data[1],sizeof(struct ParaFor));
 	}
 }
 
-task_t task_parallel_for(void* elems, size_t elem_count, size_t elem_size, task_parallel_for_fn_t fn, void* param)
+task_t task_parallel_for(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_for_fn_t fn, void* param)
 {
 	struct ParaFor task_data =
 	{
@@ -55,7 +54,5 @@ task_t task_parallel_for(void* elems, size_t elem_count, size_t elem_size, task_
 		.fn = fn,
 		.param = param
 	};
-	task_t task;
-	task_run(&task,NULL,&parallelForSplit,&task_data,sizeof(struct ParaFor));
-	return task;
+	return task_run(pt,&parallelForSplit,&task_data,sizeof(struct ParaFor));
 }
