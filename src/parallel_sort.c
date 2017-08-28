@@ -62,8 +62,33 @@ static void parallelSortSplit(task_t parent, const void* p)
 		task_join(sub_tasks[1]);
 		task_join(sub_tasks[0]);
 
-		// Now merge
-		// See: http://www.drdobbs.com/parallel/parallel-in-place-merge/240008783?pgno=4
+		// Now merge in-place - HERE BE BUGS!
+		char* p = sub_task_data[0].elems;
+		char* q = sub_task_data[1].elems;
+		char* end = q + (sub_task_data[1].elem_count * ps->elem_size);
+		while (p < q)
+		{
+			if ((ps->fn)(p,q,ps->param) > 0)
+			{
+				// Swap p and q, incrementing both
+				char* p_end = p + ps->elem_size;
+				while (p < p_end)
+				{
+					char t = *p;
+					*p++ = *q;
+					*q++ = t;
+				}
+
+				// Don't shoot past the end
+				if (q == end)
+					q -= ps->elem_size;
+			}
+			else
+			{
+				// Inc p
+				p += ps->elem_size;
+			}
+		}
 	}
 }
 
