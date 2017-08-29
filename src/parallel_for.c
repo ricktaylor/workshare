@@ -11,36 +11,45 @@ struct ParaFor
 	void* param;
 };
 
-static void parallelForSplit(task_t parent, const void* p)
-{
-	const struct ParaFor* pf = p;
+static const size_t L1_data_cache_size = 32 * 1024;
 
-	// Check for L1 cache size
-	if (pf->elem_count * pf->elem_size <= 32 * 1024)
+static void parallelForSplit(task_t parent, void* p)
+{
+	struct ParaFor* pf = p;
+
+	// Find the split point
+	size_t split = (pf->elem_count * pf->elem_size) / 2;
+
+	// Round up to L1_data_cache_size
+	split = (split + (L1_data_cache_size-1)) & ~(L1_data_cache_size-1);
+
+	// Round up to elem_size
+	split = (split + (pf->elem_size-1)) & ~(pf->elem_size-1);
+
+	if (split > pf->elem_count * pf->elem_size)
+		split = pf->elem_count * pf->elem_size;
+
+	if (split <= L1_data_cache_size)
 		(*pf->fn)(pf->elems,pf->elem_count,pf->param);
 	else
 	{
-		size_t split = pf->elem_count / 2;
-		struct ParaFor sub_task_data[2] =
+		struct ParaFor sub_task_data =
 		{
-			{
-				.elems = pf->elems,
-				.elem_count = split,
-				.elem_size = pf->elem_size,
-				.fn = pf->fn,
-				.param = pf->param
-			},
-			{
-				.elems = ((char*)pf->elems) + (split * pf->elem_size),
-				.elem_count = pf->elem_count - split,
-				.elem_size = pf->elem_size,
-				.fn = pf->fn,
-				.param = pf->param
-			}
+			.elems = pf->elems,
+			.elem_count = split / pf->elem_size,
+			.elem_size = pf->elem_size,
+			.fn = pf->fn,
+			.param = pf->param
 		};
+		task_run(parent,&parallelForSplit,&sub_task_data,sizeof(sub_task_data));
 
-		task_run(parent,&parallelForSplit,&sub_task_data[0],sizeof(struct ParaFor));
-		task_run(parent,&parallelForSplit,&sub_task_data[1],sizeof(struct ParaFor));
+		pf->elems = (char*)pf->elems + split;
+		pf->elem_count -= (split / pf->elem_size);
+
+		if (pf->elem_count * pf->elem_size > L1_data_cache_size)
+			task_run(parent,&parallelForSplit,pf,sizeof(struct ParaFor));
+		else
+			(*pf->fn)(pf->elems,pf->elem_count,pf->param);
 	}
 }
 
