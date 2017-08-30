@@ -23,5 +23,6 @@ task_t task_parallel_for(void* elems, size_t elem_count, size_t elem_size, task_
 
 typedef int (*task_parallel_compare_fn_t)(const void*,const void*,void*);
 task_t task_parallel_sort(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_compare_fn_t fn, void* param);
+task_t task_bitonic_sort(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_compare_fn_t fn, void* param);
 
 #endif /* SRC_TASK_H_ */

@@ -73,10 +73,15 @@ static void test_sort_each(size_t data_count)
 	if (!data2)
 		abort();
 
+	unsigned char* data3 = malloc(data_count);
+	if (!data3)
+		abort();
+
 	for (size_t i=0;i < data_count;++i)
 		data1[i] = 32 + (rand() % 64);
 
 	memcpy(data2,data1,data_count);
+	memcpy(data3,data1,data_count);
 
 	DWORD dwStart = GetTickCount();
 
@@ -104,15 +109,27 @@ static void test_sort_each(size_t data_count)
 	printf("SORT (%g): Parallel elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
 	fflush(stdout);
 
-	//assert(memcmp(data1,data2,data_count) == 0);
+	assert(memcmp(data1,data2,data_count) == 0);
+
+	dwStart = GetTickCount();
+
+	task_join(task_bitonic_sort(data3,data_count,1,NULL,&sort_fn,NULL));
+
+	dwEnd = GetTickCount();
+
+	printf("SORT (%g): Bitonic elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
+	fflush(stdout);
+
+	assert(memcmp(data1,data3,data_count) == 0);
 
 	free(data1);
 	free(data2);
+	free(data3);
 }
 
 static void test_sort()
 {
-	for (size_t l = 32; l < 1024 * 1024; l *= 2)
+	for (size_t l = 64; l < 1024 * 1024; l *= 2)
 	{
 		test_sort_each(l * 1024);
 	}

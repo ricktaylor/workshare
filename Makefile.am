@@ -11,7 +11,8 @@ workshare_SOURCES = \
 	src/threads.c \
 	src/proactor.c \
 	src/parallel_for.c \
-	src/parallel_sort.c
+	src/parallel_sort.c \
+	src/bitonic_sort.c
 			
 #thehouse_LDADD += -lglfw -lGL
 
