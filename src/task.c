@@ -17,6 +17,12 @@ struct TaskParts
 	uintptr_t offset : ((sizeof(uintptr_t)*8) - 8 - THREAD_BITS);
 };
 
+union TaskPun
+{
+	struct TaskParts parts;
+	task_t           task;
+};
+
 static_assert(sizeof(task_t) == sizeof(struct TaskParts),"TaskParts is incorrect!");
 
 struct Task
@@ -228,29 +234,29 @@ static int taskRunNext(struct ThreadInfo* info)
 static struct Task* taskAllocate(struct ThreadInfo* info)
 {
 	struct Task* task = NULL;
-	struct TaskParts t = {0};
+	union TaskPun p = { .parts = {0} };
 	for (unsigned int i = 0; i < info->m_scheduler->m_threads; ++i)
 	{
 		if (info == &info->m_scheduler->m_thread_info[i])
 		{
-			t.thread = i;
+			p.parts.thread = i;
 			break;
 		}
 	}	
 	
 	for (unsigned int i = 0; i < TASK_COUNT; ++i)
 	{
-		t.offset = (info->m_free_task++) % TASK_COUNT;
-		task = &info->m_pool[t.offset];
+		p.parts.offset = (info->m_free_task++) % TASK_COUNT;
+		task = &info->m_pool[p.parts.offset];
 		if (atomic_load_explicit(&task->m_active,memory_order_relaxed) == 0)
 		{
 			atomic_store_explicit(&task->m_active,1,memory_order_relaxed);
 			
-			t.generation = ++task->m_generation;
-			if (!t.generation)
-				t.generation = ++task->m_generation;
+			p.parts.generation = ++task->m_generation;
+			if (!p.parts.generation)
+				p.parts.generation = ++task->m_generation;
 			
-			task->m_handle = *(task_t*)&t;
+			task->m_handle = p.task;
 			break;
 		}
 	}
@@ -261,10 +267,11 @@ static struct Task* taskAllocate(struct ThreadInfo* info)
 static struct Task* taskDeref(struct ThreadInfo* info, task_t t)
 {
 	struct Task* task = NULL;
-	struct TaskParts task_parts = *(struct TaskParts*)&t;
-	if (task_parts.offset < TASK_COUNT && task_parts.thread < info->m_scheduler->m_threads)
+	union TaskPun p = { .task = t };
+
+	if (p.parts.offset < TASK_COUNT && p.parts.thread < info->m_scheduler->m_threads)
 	{
-		task = &info->m_scheduler->m_thread_info[task_parts.thread].m_pool[task_parts.offset];
+		task = &info->m_scheduler->m_thread_info[p.parts.thread].m_pool[p.parts.offset];
 		if (task->m_handle != t)
 			task = NULL;
 	}
