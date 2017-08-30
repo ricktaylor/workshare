@@ -11,25 +11,6 @@ struct ParaSort
 	void* param;
 };
 
-#if 0
-static void serialSort(struct ParaSort* ps)
-{
-#if defined(__MINGW32__)
-	int sort_trampoline(void* c, const void* p1, const void* p2)
-	{
-		return ps->sort * (*ps->fn)(p1,p2,c);
-	}
-	qsort_s(ps->elems,ps->elem_count,ps->elem_size,&sort_trampoline,ps->param);
-#else
-	int sort_trampoline(const void* p1, const void* p2, void* c)
-	{
-		return ps->sort * (*ps->fn)(p1,p2,ps->param);
-	}
-	qsort_r(ps->elems,ps->elem_count,ps->elem_size,&sort_trampoline,ps->param);
-#endif
-}
-#endif
-
 static const size_t L1_data_cache_size = 32 * 1024;
 
 // Check out http://www.drdobbs.com/parallel/parallel-in-place-merge-sort/240169094 for details
