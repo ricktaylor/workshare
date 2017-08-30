@@ -24,7 +24,8 @@ static void parallelFor(task_t parent, void* p)
 	split = (split + (L1_data_cache_size-1)) & ~(L1_data_cache_size-1);
 
 	// Round up to elem_size
-	split = (split + (pf->elem_size-1)) & ~(pf->elem_size-1);
+	if (split % pf->elem_size)
+		split += pf->elem_size - (split % pf->elem_size);
 
 	if (split > pf->elem_count * pf->elem_size)
 		split = pf->elem_count * pf->elem_size;
