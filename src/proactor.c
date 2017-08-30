@@ -642,7 +642,7 @@ static int proactorPoll(struct Proactor* pr, int timeout)
 	return ret;
 }
 
-static void proactorRun(task_t task, const void* param)
+static void proactorRun(task_t task, void* param)
 {
 	for (struct Proactor* pr = *(struct Proactor* const*)param; pr->m_n_poll_fds > 0; )
 	{
