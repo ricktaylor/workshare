@@ -63,9 +63,8 @@ static int sort_fn(const void* p1, const void* p2, void* p)
 	return (*(unsigned char*)p1 - *(unsigned char*)p2);
 }
 
-static void test_sort()
+static void test_sort_each(size_t data_count)
 {
-	const size_t data_count = 1024 * 1024 * 1024;
 	unsigned char* data1 = malloc(data_count);
 	if (!data1)
 		abort();
@@ -93,7 +92,7 @@ static void test_sort()
 
 	DWORD dwEnd = GetTickCount();
 
-	printf("SORT: Linear elapsed time: %zu\n",(size_t)(dwEnd-dwStart));
+	printf("SORT (%g): Linear elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
 	fflush(stdout);
 
 	dwStart = GetTickCount();
@@ -102,22 +101,30 @@ static void test_sort()
 
 	dwEnd = GetTickCount();
 
-	printf("SORT: Parallel elapsed time: %zu\n",(size_t)(dwEnd-dwStart));
+	printf("SORT (%g): Parallel elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
 	fflush(stdout);
 
-	assert(memcmp(data1,data2,data_count) == 0);
+	//assert(memcmp(data1,data2,data_count) == 0);
 
 	free(data1);
 	free(data2);
+}
+
+static void test_sort()
+{
+	for (size_t l = 32; l < 1024 * 1024; l *= 2)
+	{
+		test_sort_each(l * 1024);
+	}
 }
 
 int main(int argc, char* argv[])
 {
 	scheduler_t s = scheduler_create(8);
 
-	test_for();
+	//test_for();
 
-//	test_sort();
+	test_sort();
 
 	scheduler_destroy(s);
 

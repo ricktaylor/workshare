@@ -6,7 +6,7 @@ bin_PROGRAMS = workshare
 #workshare_LDFLAGS = $(PTHREAD_LIBS)
 
 workshare_SOURCES = \
-	src/main.c \
+	src/test.c \
 	src/task.c \
 	src/threads.c \
 	src/proactor.c \

@@ -13,7 +13,7 @@ struct ParaFor
 
 static const size_t L1_data_cache_size = 32 * 1024;
 
-static void parallelForSplit(task_t parent, void* p)
+static void parallelFor(task_t parent, void* p)
 {
 	struct ParaFor* pf = p;
 
@@ -41,13 +41,13 @@ static void parallelForSplit(task_t parent, void* p)
 			.fn = pf->fn,
 			.param = pf->param
 		};
-		task_run(parent,&parallelForSplit,&sub_task_data,sizeof(sub_task_data));
+		task_run(parent,&parallelFor,&sub_task_data,sizeof(sub_task_data));
 
 		pf->elems = (char*)pf->elems + split;
-		pf->elem_count -= (split / pf->elem_size);
+		pf->elem_count -= sub_task_data.elem_count;
 
 		if (pf->elem_count * pf->elem_size > L1_data_cache_size)
-			task_run(parent,&parallelForSplit,pf,sizeof(struct ParaFor));
+			task_run(parent,&parallelFor,pf,sizeof(struct ParaFor));
 		else
 			(*pf->fn)(pf->elems,pf->elem_count,pf->param);
 	}
@@ -63,5 +63,5 @@ task_t task_parallel_for(void* elems, size_t elem_count, size_t elem_size, task_
 		.fn = fn,
 		.param = param
 	};
-	return task_run(pt,&parallelForSplit,&task_data,sizeof(struct ParaFor));
+	return task_run(pt,&parallelFor,&task_data,sizeof(struct ParaFor));
 }
