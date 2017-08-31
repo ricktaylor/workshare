@@ -65,23 +65,23 @@ static int sort_fn(const void* p1, const void* p2, void* p)
 
 static void test_sort_each(size_t data_count)
 {
-	unsigned char* data1 = malloc(data_count);
+	uint32_t* data1 = malloc(data_count * sizeof(uint32_t));
 	if (!data1)
 		abort();
 
-	unsigned char* data2 = malloc(data_count);
+	uint32_t* data2 = malloc(data_count * sizeof(uint32_t));
 	if (!data2)
 		abort();
 
-	unsigned char* data3 = malloc(data_count);
+	uint32_t* data3 = malloc(data_count * sizeof(uint32_t));
 	if (!data3)
 		abort();
 
 	for (size_t i=0;i < data_count;++i)
-		data1[i] = 32 + (rand() % 64);
+		data1[i] = rand();
 
-	memcpy(data2,data1,data_count);
-	memcpy(data3,data1,data_count);
+	memcpy(data2,data1,data_count * sizeof(uint32_t));
+	memcpy(data3,data1,data_count * sizeof(uint32_t));
 
 	DWORD dwStart = GetTickCount();
 
@@ -90,37 +90,37 @@ static void test_sort_each(size_t data_count)
 	{
 		return sort_fn(p1,p2,c);
 	}
-	qsort_s(data1,data_count,1,&sort_trampoline,NULL);
+	qsort_s(data1,data_count,sizeof(data1[0]),&sort_trampoline,NULL);
 #else
-	qsort_r(data1,data_count,1,sort_fn,NULL);
+	qsort_r(data1,data_count,sizeof(data1[0]),sort_fn,NULL);
 #endif
 
 	DWORD dwEnd = GetTickCount();
 
-	printf("SORT (%g): Linear elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
+	printf("SORT (%f): Linear elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
 	fflush(stdout);
 
 	dwStart = GetTickCount();
 
-	task_join(task_parallel_sort(data2,data_count,1,NULL,&sort_fn,NULL));
+	task_join(task_parallel_sort(data2,data_count,sizeof(data2[0]),NULL,&sort_fn,NULL));
 
 	dwEnd = GetTickCount();
 
-	printf("SORT (%g): Parallel elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
+	printf("SORT (%f): Parallel elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
 	fflush(stdout);
 
-	assert(memcmp(data1,data2,data_count) == 0);
+	assert(memcmp(data1,data2,data_count * sizeof(data1[0])) == 0);
 
-	dwStart = GetTickCount();
+	/*dwStart = GetTickCount();
 
-	task_join(task_bitonic_sort(data3,data_count,1,NULL,&sort_fn,NULL));
+	task_join(task_bitonic_sort(data3,data_count,sizeof(data3[0]),NULL,&sort_fn,NULL));
 
 	dwEnd = GetTickCount();
 
-	printf("SORT (%g): Bitonic elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
+	printf("SORT (%f): Bitonic elapsed time: %zu\r\n",(double)data_count,(size_t)(dwEnd-dwStart));
 	fflush(stdout);
 
-	assert(memcmp(data1,data3,data_count) == 0);
+	assert(memcmp(data1,data3,data_count * sizeof(data1[0])) == 0);*/
 
 	free(data1);
 	free(data2);

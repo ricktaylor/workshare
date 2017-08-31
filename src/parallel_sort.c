@@ -12,31 +12,29 @@ struct ParaSort
 	void* param;
 };
 
-atomic_size_t tiny_merges = 0;
-atomic_size_t expensive_merges = 0;
-atomic_size_t expensive_swaps = 0;
-
 static const size_t L1_data_cache_size = 32 * 1024;
 
 // Check out http://www.drdobbs.com/parallel/parallel-in-place-merge-sort/240169094 for details
-static void blockRotate(void* elems, size_t elem_size, size_t elem_count)
+static void blockRotate(task_t parent, void* p)
 {
-	// Reverse a range of values from [0..elem_count-1]
-	char* l = elems;
-	char* r = l + ((elem_count - 1) * elem_size);
-	char tmp[elem_size];
+	struct ParaSort* ps = p;
 
-	for (;l < r; l += elem_size, r -= elem_size)
+	// Reverse a range of values from [0..elem_count-1]
+	char* l = ps->elems;
+	char* r = l + ((ps->elem_count - 1) * ps->elem_size);
+	char tmp[ps->elem_size];
+
+	for (;l < r; l += ps->elem_size, r -= ps->elem_size)
 	{
-		memcpy(tmp,r,elem_size);
-		memcpy(r,l,elem_size);
-		memcpy(l,tmp,elem_size);
+		memcpy(tmp,r,ps->elem_size);
+		memcpy(r,l,ps->elem_size);
+		memcpy(l,tmp,ps->elem_size);
 	}
 }
 
 static void blockSwap(void* elems, size_t elem_size, size_t split, size_t elem_count)
 {
-	if (split * elem_size <= L1_data_cache_size || (elem_count - split) * elem_size <= L1_data_cache_size)
+	if (split * elem_size <= 1024 * 1024 || (elem_count - split) * elem_size <= 1024 * 1024)
 	{
 		if (split < (elem_count - split))
 		{
@@ -55,13 +53,29 @@ static void blockSwap(void* elems, size_t elem_size, size_t split, size_t elem_c
 	}
 	else
 	{
-		// Expensive in-place merge
-		//printf("Rotate: 0..%zu..%zu\n",split,elem_count);
-		atomic_fetch_add(&expensive_swaps,1);
+		struct ParaSort sub_task_data[2] =
+		{
+			{
+				.elems = elems,
+				.elem_count = split,
+				.elem_size = elem_size
+			},
+			{
+				.elems = (char*)elems + (split * elem_size),
+				.elem_count = elem_count - split,
+				.elem_size = elem_size
+			},
+		};
 
-		blockRotate(elems,elem_size,split);
-		blockRotate((char*)elems + (split * elem_size),elem_size,elem_count - split);
-		blockRotate(elems,elem_size,elem_count);
+		task_t sub_tasks[2] = { NULL, NULL };
+		sub_tasks[0] = task_run(NULL,&blockRotate,&sub_task_data[0],sizeof(sub_task_data[0]));
+		sub_tasks[1] = task_run(NULL,&blockRotate,&sub_task_data[1],sizeof(sub_task_data[1]));
+
+		task_join(sub_tasks[0]);
+		task_join(sub_tasks[1]);
+
+		sub_task_data[0].elem_count = elem_count;
+		blockRotate(NULL,&sub_task_data[0]);
 	}
 }
 
@@ -84,51 +98,52 @@ static void parallelMerge(task_t parent, void* p)
 {
 	struct ParaSort* ps = p;
 
-	if (ps->elem_count * ps->elem_size <= L1_data_cache_size)
+	/*if (ps->elem_count * ps->elem_size <= 1024 * 1024)
 	{
-		char buf[ps->elem_count * ps->elem_size];
 		char* a = ps->elems;
-		char* b = (char*)ps->elems + (ps->split * ps->elem_size);
+		char* a_end = a + (ps->split * ps->elem_size);
+		char* b = a_end;
+		char* b_end = a + (ps->elem_count * ps->elem_size);
+		char buf[ps->elem_count * ps->elem_size];
 		char* c = buf;
 
-		while (a < (char*)ps->elems + (ps->split * ps->elem_size) && b < (char*)ps->elems + (ps->elem_count * ps->elem_size))
+		while (a < a_end && b < b_end)
 		{
-			if ((*ps->fn)(a,b,ps->param) <= 0)
-			{
-				memcpy(c,a,ps->elem_size);
+			char* a_start = a;
+			while ((*ps->fn)(a,b,ps->param) <= 0 && a < a_end)
 				a += ps->elem_size;
-			}
-			else
+
+			if (a_start < a)
 			{
-				memcpy(c,b,ps->elem_size);
+				memcpy(c,a_start,a - a_start);
+				c += a - a_start;
+			}
+
+			char* b_start = b;
+			do
+			{
 				b += ps->elem_size;
 			}
-			c += ps->elem_size;
+			while ((*ps->fn)(a,b,ps->param) > 0 && b < b_end);
+
+			if (b_start < b)
+			{
+				memcpy(c,b_start,b - b_start);
+				c += b - b_start;
+			}
 		}
 
-		while (a < (char*)ps->elems + (ps->split * ps->elem_size))
-		{
-			memcpy(c,a,ps->elem_size);
-			a += ps->elem_size;
-			c += ps->elem_size;
-		}
+		if (a < a_end)
+			memcpy(c,a,a_end - a);
 
-		while (b < (char*)ps->elems + (ps->elem_count * ps->elem_size))
-		{
-			memcpy(c,b,ps->elem_size);
-			b += ps->elem_size;
-			c += ps->elem_size;
-		}
+		if (b < b_end)
+			memcpy(c,b,b_end - b);
 
 		memcpy(ps->elems,buf,ps->elem_count * ps->elem_size);
 
-		atomic_fetch_add(&tiny_merges,1);
+		//atomic_fetch_add(&tiny_merges,1);
 		return;
-	}
-
-	// Expensive in-place merge
-	//printf("Expensive merge: 0..%zu..%zu\n",ps->split,ps->elem_count);
-	atomic_fetch_add(&expensive_merges,1);
+	}*/
 
 	struct ParaSort sub_task_data = *ps;
 	if (ps->split >= ps->elem_count - ps->split)
@@ -165,15 +180,10 @@ static void parallelMerge(task_t parent, void* p)
 	}
 
 	if (sub_task_data.split && sub_task_data.split < sub_task_data.elem_count)
-	{
-		if (sub_task_data.elem_count >= L1_data_cache_size)
-			task_run(parent,&parallelMerge,&sub_task_data,sizeof(sub_task_data));
-		else
-			parallelMerge(parent,&sub_task_data);
-	}
+		task_run(parent,&parallelMerge,&sub_task_data,sizeof(sub_task_data));
 
 	if (ps->split && ps->split < ps->elem_count)
-		parallelMerge(parent,ps);
+		task_run(parent,&parallelMerge,ps,sizeof(*ps));
 }
 
 static void serialSort(struct ParaSort* ps)
@@ -229,21 +239,21 @@ static void parallelSort(task_t parent, void* p)
 		};
 
 		task_t sub_tasks[2] = { NULL, NULL};
-		sub_tasks[0] = task_run(parent,&parallelSort,&sub_task_data[0],sizeof(sub_task_data[0]));
+		if (sub_task_data[0].elem_count > 1)
+			sub_tasks[0] = task_run(NULL,&parallelSort,&sub_task_data[0],sizeof(sub_task_data[0]));
 
-		if (sub_task_data[1].elem_count * ps->elem_size >= L1_data_cache_size)
-			sub_tasks[1] = task_run(parent,&parallelSort,&sub_task_data[1],sizeof(sub_task_data[1]));
-		else
-			serialSort(&sub_task_data[1]);
+		if (sub_task_data[1].elem_count > 1)
+			sub_tasks[1] = task_run(NULL,&parallelSort,&sub_task_data[1],sizeof(sub_task_data[1]));
 
-		if (sub_tasks[1])
-			task_join(sub_tasks[1]);
 		task_join(sub_tasks[0]);
+		task_join(sub_tasks[1]);
 
 		ps->split = split / ps->elem_size;
 		parallelMerge(parent,ps);
 	}
 }
+
+#include <math.h>
 
 task_t task_parallel_sort(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_compare_fn_t fn, void* param)
 {
@@ -256,15 +266,5 @@ task_t task_parallel_sort(void* elems, size_t elem_count, size_t elem_size, task
 		.param = param
 	};
 
-	atomic_store(&tiny_merges,0);
-	atomic_store(&expensive_merges,0);
-	atomic_store(&expensive_swaps,0);
-
-	task_t s = task_run(pt,&parallelSort,&task_data,sizeof(struct ParaSort));
-
-	task_join(s);
-
-	printf("Tiny: %zu, ExpMerges: %zu, ExpSwaps: %zu\n",atomic_load(&tiny_merges),atomic_load(&expensive_merges),atomic_load(&expensive_swaps));
-
-	return s;
+	return task_run(pt,&parallelSort,&task_data,sizeof(struct ParaSort));
 }
