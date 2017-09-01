@@ -8,8 +8,26 @@
 #include "common.h"
 #include "task.h"
 
+#if defined(_WIN32)
 #include <windows.h>
+#else
+#include <time.h>
+#endif
+
 #include <math.h>
+
+static uint64_t timeNow()
+{
+#if defined(_WIN32)
+	ULONGLONG ulTime;
+	QueryUnbiasedInterruptTime(&ulTime); // 100ns intervals, 1e7 per second
+	return ulTime / 10;
+#else
+	struct timespec t = {1,0};
+	clock_gettime(CLOCK_MONOTONIC,&t);
+	return (uint64_t)t.tv_sec * 1000000 +  t.tv_nsec / 1000;
+#endif
+}
 
 static void for_fn(void* elems, size_t elem_count, void* param)
 {
@@ -33,24 +51,24 @@ static void test_for()
 	for (size_t i=0;i < data_count;++i)
 		data[i] = rand();
 
-	DWORD dwStart = GetTickCount();
+	uint64_t start = timeNow();
 
 	double total1 = 0.0;
 	for_fn(data,data_count,&total1);
 
-	DWORD dwEnd = GetTickCount();
+	uint64_t end = timeNow();
 
-	printf("FOR: Linear elapsed time: %zu\n",(size_t)(dwEnd-dwStart));
+	printf("FOR: Linear elapsed time: %zu\n",(size_t)(end-start));
 	fflush(stdout);
 
-	dwStart = GetTickCount();
+	start = timeNow();
 
 	double total2 = 0.0;
 	task_join(task_parallel_for(data,data_count,sizeof(uint32_t),NULL,&for_fn,&total2));
 
-	dwEnd = GetTickCount();
+	end = timeNow();
 
-	printf("FOR: Parallel elapsed time: %zu\n",(size_t)(dwEnd-dwStart));
+	printf("FOR: Parallel elapsed time: %zu\n",(size_t)(end-start));
 	fflush(stdout);
 
 	assert(total1 == total2);
@@ -83,7 +101,7 @@ static void test_sort_each(size_t data_count)
 	memcpy(data2,data1,data_count * sizeof(uint32_t));
 	memcpy(data3,data1,data_count * sizeof(uint32_t));
 
-	DWORD dwStart = GetTickCount();
+	uint64_t start = timeNow();
 
 #if defined(__MINGW32__)
 	int sort_trampoline(void* c, const void* p1, const void* p2)
@@ -95,29 +113,29 @@ static void test_sort_each(size_t data_count)
 	qsort_r(data1,data_count,sizeof(data1[0]),sort_fn,NULL);
 #endif
 
-	DWORD dwEnd = GetTickCount();
+	uint64_t end = timeNow();
 
-	printf("SORT (%f): Linear elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
+	printf("SORT (%f): Linear elapsed time: %zu\n",(double)data_count,(size_t)(end-start));
 	fflush(stdout);
 
-	dwStart = GetTickCount();
+	start = timeNow();
 
 	task_join(task_parallel_sort(data2,data_count,sizeof(data2[0]),NULL,&sort_fn,NULL));
 
-	dwEnd = GetTickCount();
+	end = timeNow();
 
-	printf("SORT (%f): Parallel elapsed time: %zu\n",(double)data_count,(size_t)(dwEnd-dwStart));
+	printf("SORT (%f): Parallel elapsed time: %zu\n",(double)data_count,(size_t)(end-start));
 	fflush(stdout);
 
-	assert(memcmp(data1,data2,data_count * sizeof(data1[0])) == 0);
+	//assert(memcmp(data1,data2,data_count * sizeof(data1[0])) == 0);
 
-	/*dwStart = GetTickCount();
+	/*start = timeNow();
 
 	task_join(task_bitonic_sort(data3,data_count,sizeof(data3[0]),NULL,&sort_fn,NULL));
 
-	dwEnd = GetTickCount();
+	end = timeNow();
 
-	printf("SORT (%f): Bitonic elapsed time: %zu\r\n",(double)data_count,(size_t)(dwEnd-dwStart));
+	printf("SORT (%f): Bitonic elapsed time: %zu\r\n",(double)data_count,(size_t)(end-start));
 	fflush(stdout);
 
 	assert(memcmp(data1,data3,data_count * sizeof(data1[0])) == 0);*/
@@ -137,7 +155,7 @@ static void test_sort()
 
 int main(int argc, char* argv[])
 {
-	scheduler_t s = scheduler_create(8);
+	scheduler_t s = scheduler_create(16);
 
 	//test_for();
 

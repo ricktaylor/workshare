@@ -1,4 +1,9 @@
+#ifndef SRC_THREADS_H_
+#define SRC_THREADS_H_
 
+#if !defined(__STDC_NO_THREADS__)
+#include <threads.h>
+#else
 
 typedef int(*thrd_start_t)(void*);
 
@@ -84,18 +89,32 @@ static inline void sema_destroy(sema_t* s)
 
 #include <pthread.h>
 
-typedef pthread_t thrd_t;
-
-#define thrd_yield pthread_yield
-#define thrd_equal pthread_equal
-#define thrd_current pthread_self
-
 enum
 {
 	thrd_success = 0,
 	thrd_error = EDEADLK,
 	thrd_nomem = ENOMEM
 };
+
+typedef pthread_once_t once_flag;
+
+#define ONCE_FLAG_INIT PTHREAD_ONCE_INIT
+
+#define call_once pthread_once
+
+typedef pthread_key_t tss_t;
+typedef void (*tss_dtor_t)(void*);
+
+#define tss_create pthread_key_create
+#define tss_delete pthread_key_delete
+#define tss_get pthread_getspecific
+#define tss_set pthread_setspecific
+
+typedef pthread_t thrd_t;
+
+#define thrd_yield pthread_yield
+#define thrd_equal pthread_equal
+#define thrd_current pthread_self
 
 static inline int thrd_join(thrd_t thr, int* res)
 {
@@ -110,7 +129,7 @@ static inline int thrd_join(thrd_t thr, int* res)
 
 static inline int thrd_create( thrd_t *thr, thrd_start_t func, void *arg )
 {
-	int err = pthread_create(thr,NULL,(void*(*)(void*))&func,arg);
+	int err = pthread_create(thr,NULL,(void*(*)(void*))func,arg);
 	if (err == EAGAIN)
 		err = thrd_nomem;
 	else if (err)
@@ -154,3 +173,6 @@ static inline int sema_signal(sema_t* s, unsigned int count)
 }
 
 #endif
+
+#endif // !__STDC_NO_THREADS__
+#endif /* SRC_THREADS_H_ */

@@ -11,6 +11,13 @@
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <realtimeapiset.h>
+#else
+#include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #endif
 
 #include "proactor.h"
@@ -735,7 +742,7 @@ static int proactorSocketPair(socket_t* fd1, socket_t* fd2)
 		// Set fd2 to O_NONBLOCK
 		int flags = fcntl(fds[1], F_GETFL, 0);
 		if (flags == -1)
-			err = errno
+			err = errno;
 		else
 		{
 			flags |= O_NONBLOCK;
@@ -744,8 +751,8 @@ static int proactorSocketPair(socket_t* fd1, socket_t* fd2)
 
 		if (err)
 		{
-			socketclose(fds[0]);
-			socketclose(fds[1]);
+			closesocket(fds[0]);
+			closesocket(fds[1]);
 		}
 		else
 		{
