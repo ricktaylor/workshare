@@ -1,12 +1,6 @@
 #ifndef SRC_THREADS_H_
 #define SRC_THREADS_H_
 
-#if !defined(__STDC_NO_THREADS__)
-#include <threads.h>
-#else
-
-typedef int(*thrd_start_t)(void*);
-
 #if defined(_WIN32)
 
 #include <windows.h>
@@ -42,6 +36,7 @@ static inline int tss_set( tss_t tss_id, void *val )
 }
 
 typedef HANDLE thrd_t;
+typedef int(*thrd_start_t)(void*);
 
 static inline int thrd_join(thrd_t thr, int* res)
 {
@@ -85,7 +80,9 @@ static inline void sema_destroy(sema_t* s)
 	CloseHandle(*s);
 }
 
-#elif !defined(_WIN32)
+#elif !defined(__STDC_NO_THREADS__)
+#include <threads.h>
+#else
 
 #include <pthread.h>
 
@@ -111,6 +108,8 @@ typedef void (*tss_dtor_t)(void*);
 #define tss_set pthread_setspecific
 
 typedef pthread_t thrd_t;
+
+typedef int(*thrd_start_t)(void*);
 
 #define thrd_yield pthread_yield
 #define thrd_equal pthread_equal
@@ -174,5 +173,4 @@ static inline int sema_signal(sema_t* s, unsigned int count)
 
 #endif
 
-#endif // !__STDC_NO_THREADS__
 #endif /* SRC_THREADS_H_ */

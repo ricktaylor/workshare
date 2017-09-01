@@ -49,7 +49,7 @@ AX_APPEND_COMPILE_FLAGS([-std=c11],[CFLAGS])
 AS_IF([test "x$oo_test_CFLAGS" != "xset"],
 [
   AS_IF([test "x$debug" = "xtrue"],[
-    AX_APPEND_COMPILE_FLAGS([-ggdb -O0],[CFLAGS])
+    AX_APPEND_COMPILE_FLAGS([-ggdb -O2],[CFLAGS])
   ],[
     AX_APPEND_COMPILE_FLAGS([-O2],[CFLAGS])
   ])
