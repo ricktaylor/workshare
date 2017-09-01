@@ -80,7 +80,7 @@ static inline void sema_destroy(sema_t* s)
 	CloseHandle(*s);
 }
 
-#elif !defined(__STDC_NO_THREADS__)
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L) && defined(__STDC_NO_THREADS__) && (__STDC_NO_THREADS__ != 1)
 #include <threads.h>
 #else
 
