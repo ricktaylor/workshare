@@ -115,7 +115,7 @@ static void test_sort_each(size_t data_count)
 
 	uint64_t end = timeNow();
 
-	printf("SORT (%f): Linear elapsed time: %zu\n",(double)data_count,(size_t)(end-start));
+	printf("SORT (%zu): Linear elapsed time: %zu\n",data_count,(size_t)(end-start));
 	fflush(stdout);
 
 	start = timeNow();
@@ -124,7 +124,7 @@ static void test_sort_each(size_t data_count)
 
 	end = timeNow();
 
-	printf("SORT (%f): Parallel elapsed time: %zu\n",(double)data_count,(size_t)(end-start));
+	printf("SORT (%zu): Parallel elapsed time: %zu\n",data_count,(size_t)(end-start));
 	fflush(stdout);
 
 	//assert(memcmp(data1,data2,data_count * sizeof(data1[0])) == 0);
@@ -135,7 +135,7 @@ static void test_sort_each(size_t data_count)
 
 	end = timeNow();
 
-	printf("SORT (%f): Bitonic elapsed time: %zu\r\n",(double)data_count,(size_t)(end-start));
+	printf("SORT (%zu): Bitonic elapsed time: %zu\r\n",data_count,(size_t)(end-start));
 	fflush(stdout);
 
 	assert(memcmp(data1,data3,data_count * sizeof(data1[0])) == 0);*/
