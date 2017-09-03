@@ -81,6 +81,9 @@ static int sort_fn(const void* p1, const void* p2, void* p)
 	return (*(unsigned char*)p1 - *(unsigned char*)p2);
 }
 
+task_t task_merge_sort(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_compare_fn_t fn, void* param);
+task_t task_bitonic_sort(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_compare_fn_t fn, void* param);
+
 static void test_sort_each(size_t data_count)
 {
 	uint32_t* data1 = malloc(data_count * sizeof(uint32_t));
@@ -115,30 +118,30 @@ static void test_sort_each(size_t data_count)
 
 	uint64_t end = timeNow();
 
-	printf("SORT (%zu): Linear elapsed time: %zu\n",data_count,(size_t)(end-start));
+	printf("SORT (%zu): Serial qsort elapsed time: %zu\n",data_count,(size_t)(end-start));
 	fflush(stdout);
 
 	start = timeNow();
 
-	task_join(task_parallel_sort(data2,data_count,sizeof(data2[0]),NULL,&sort_fn,NULL));
+	task_join(task_merge_sort(data2,data_count,sizeof(data2[0]),NULL,&sort_fn,NULL));
 
 	end = timeNow();
 
-	printf("SORT (%zu): Parallel elapsed time: %zu\n",data_count,(size_t)(end-start));
+	printf("SORT (%zu): Parallel merge sort elapsed time: %zu\n",data_count,(size_t)(end-start));
 	fflush(stdout);
 
 	//assert(memcmp(data1,data2,data_count * sizeof(data1[0])) == 0);
 
-	/*start = timeNow();
+	start = timeNow();
 
 	task_join(task_bitonic_sort(data3,data_count,sizeof(data3[0]),NULL,&sort_fn,NULL));
 
 	end = timeNow();
 
-	printf("SORT (%zu): Bitonic elapsed time: %zu\r\n",data_count,(size_t)(end-start));
+	printf("SORT (%zu): Parallel bitonic elapsed time: %zu\r\n",data_count,(size_t)(end-start));
 	fflush(stdout);
 
-	assert(memcmp(data1,data3,data_count * sizeof(data1[0])) == 0);*/
+	//assert(memcmp(data1,data3,data_count * sizeof(data1[0])) == 0);
 
 	free(data1);
 	free(data2);
@@ -155,7 +158,7 @@ static void test_sort()
 
 int main(int argc, char* argv[])
 {
-	scheduler_t s = scheduler_create(16);
+	scheduler_t s = scheduler_create(8);
 
 	//test_for();
 

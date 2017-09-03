@@ -72,20 +72,12 @@ static void bitonicMerge(task_t parent, void* p)
 	bs->elems = (char*)bs->elems + (m * bs->elem_size);
 	bs->elem_count -= m;
 
-	task_t sub_task = NULL;
+	task_t sub_tasks[2] = { NULL, NULL};
 	if (sub_task_data.elem_count > 1)
-	{
-		if (sub_task_data.elem_count * bs->elem_size >= L1_data_cache_size)
-			sub_task = task_run(parent,&bitonicMerge,&sub_task_data,sizeof(sub_task_data));
-		else
-			bitonicMerge(parent,&sub_task_data);
-	}
+		task_run(parent,&bitonicMerge,&sub_task_data,sizeof(sub_task_data));
 
 	if (bs->elem_count > 1)
-		bitonicMerge(parent,bs);
-
-	if (sub_task)
-		task_join(sub_task);
+		task_run(parent,&bitonicMerge,bs,sizeof(*bs));
 }
 
 static void bitonicSort(task_t parent, void* p)
@@ -131,14 +123,9 @@ static void bitonicSort(task_t parent, void* p)
 
 		task_t sub_tasks[2] = { NULL, NULL};
 		sub_tasks[0] = task_run(parent,&bitonicSort,&sub_task_data[0],sizeof(sub_task_data[0]));
+		sub_tasks[1] = task_run(parent,&bitonicSort,&sub_task_data[1],sizeof(sub_task_data[1]));
 
-		if (sub_task_data[1].elem_count * bs->elem_size >= L1_data_cache_size)
-			sub_tasks[1] = task_run(parent,&bitonicSort,&sub_task_data[1],sizeof(sub_task_data[1]));
-		else
-			serialSort(&sub_task_data[1]);
-
-		if (sub_tasks[1])
-			task_join(sub_tasks[1]);
+		task_join(sub_tasks[1]);
 		task_join(sub_tasks[0]);
 
 		bitonicMerge(parent,bs);

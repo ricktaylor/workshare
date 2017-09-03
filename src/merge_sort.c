@@ -255,7 +255,7 @@ static void parallelSort(task_t parent, void* p)
 
 #include <math.h>
 
-task_t task_parallel_sort(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_compare_fn_t fn, void* param)
+task_t task_merge_sort(void* elems, size_t elem_count, size_t elem_size, task_t pt, task_parallel_compare_fn_t fn, void* param)
 {
 	struct ParaSort task_data =
 	{
