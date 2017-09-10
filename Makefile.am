@@ -9,7 +9,8 @@ workshare_SOURCES = \
 	src/proactor.c \
 	src/parallel_for.c \
 	src/merge_sort.c \
-	src/bitonic_sort.c
+	src/bitonic_sort.c \
+	src/quicksort.c
 			
 if WIN32
 workshare_CPPFLAGS = -D_WIN32_WINNT=_WIN32_WINNT_WIN7
