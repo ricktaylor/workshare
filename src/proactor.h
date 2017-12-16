@@ -8,6 +8,14 @@
 #ifndef SRC_PROACTOR_H_
 #define SRC_PROACTOR_H_
 
+#include "task.h"
+
+#include <stdint.h>
+
+#if defined(_WIN32)
+#include <winsock2.h>
+#endif
+
 #if defined(_WIN32)
 typedef SOCKET socket_t;
 #else

@@ -5,13 +5,21 @@
  *      Author: rick
  */
 
-#include "common.h"
-#include "task.h"
+#include "proactor.h"
+
+#include <stdint.h>
+#include <stdatomic.h>
+#include <assert.h>
 
 #if defined(_WIN32)
-#include <winsock2.h>
 #include <realtimeapiset.h>
 #else
+//#include <stdlib.h>
+//#include <stddef.h>
+//#include <errno.h>
+//#include <string.h>
+//#include <malloc.h>
+//#include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -19,8 +27,6 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #endif
-
-#include "proactor.h"
 
 #if defined(_WIN32)
 typedef ULONG nfds_t;

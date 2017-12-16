@@ -5,9 +5,10 @@
  *      Author: rick
  */
 
-
-#include "common.h"
 #include "task.h"
+
+#include <stdlib.h>
+#include <string.h>
 
 struct ParaSort
 {

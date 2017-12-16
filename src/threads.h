@@ -1,6 +1,10 @@
 #ifndef SRC_THREADS_H_
 #define SRC_THREADS_H_
 
+#if defined(__STDC_LIB_EXT1__)
+#define __STDC_WANT_LIB_EXT1__ 1
+#endif
+
 #if defined(_WIN32)
 
 #include <windows.h>

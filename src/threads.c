@@ -5,7 +5,6 @@
  *      Author: rick
  */
 
-#include "common.h"
 #include "threads.h"
 
 #if defined(_WIN32)

@@ -1,7 +1,20 @@
 
-#include "common.h"
 #include "threads.h"
 #include "task.h"
+
+#include <stdint.h>
+#include <stdatomic.h>
+#include <assert.h>
+
+#if defined(__MINGW32__)
+static inline void* aligned_alloc(size_t alignment, size_t size)
+{
+	return _aligned_malloc(size,alignment);
+}
+#define aligned_free _aligned_free
+#else
+#define aligned_free free
+#endif
 
 #if defined(_WIN64) || (__WORDSIZE == 64)
 #define THREAD_BITS 8
