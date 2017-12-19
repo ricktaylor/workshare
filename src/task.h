@@ -12,6 +12,8 @@ typedef void (*task_fn_t)(task_t task, void* param);
 task_t task_run(task_t pt, task_fn_t fn, const void* param, unsigned int param_len);
 void task_join(task_t handle);
 
+int task_work();
+
 typedef struct opaque_scheduler_t
 {
 	int _unused;

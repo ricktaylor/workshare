@@ -305,6 +305,11 @@ void task_join(task_t handle)
 		taskRunNext(info);
 }
 
+int task_work()
+{
+	return taskRunNext(get_thread_info());
+}
+
 task_t task_run(task_t pt, task_fn_t fn, const void* param, unsigned int param_len)
 {
 	if (!fn || param_len > TASK_PARAM_MAX)
