@@ -2,9 +2,10 @@
 #include "threads.h"
 #include "task.h"
 
-#include <stdint.h>
+#include <stdlib.h>
 #include <stdatomic.h>
 #include <assert.h>
+#include <string.h>
 
 #if defined(__MINGW32__)
 static inline void* aligned_alloc(size_t alignment, size_t size)

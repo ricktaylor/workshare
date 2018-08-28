@@ -5,7 +5,10 @@
 #define __STDC_WANT_LIB_EXT1__ 1
 #endif
 
-#if defined(_WIN32)
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L) && (!defined(__STDC_NO_THREADS__) || (__STDC_NO_THREADS__ != 1))
+#include <threads.h>
+
+#elif defined(_WIN32)
 
 #include <windows.h>
 #include <process.h>
@@ -84,11 +87,10 @@ static inline void sema_destroy(sema_t* s)
 	CloseHandle(*s);
 }
 
-#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L) && defined(__STDC_NO_THREADS__) && (__STDC_NO_THREADS__ != 1)
-#include <threads.h>
 #else
-
 #include <pthread.h>
+#include <errno.h>
+#include <stdint.h>
 
 enum
 {

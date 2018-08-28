@@ -7,16 +7,20 @@
 
 #include "proactor.h"
 
-#include <stdint.h>
 #include <stdatomic.h>
 #include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
 
 #if defined(_WIN32)
 #include <realtimeapiset.h>
+
+#define POLL_EVENT_RD POLLRDNORM
+#define POLL_EVENT_WR POLLWRNORM
 #else
 //#include <stdlib.h>
 //#include <stddef.h>
-//#include <errno.h>
 //#include <string.h>
 //#include <malloc.h>
 //#include <stdio.h>
@@ -26,6 +30,9 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+
+#define POLL_EVENT_RD POLLIN
+#define POLL_EVENT_WR POLLOUT
 #endif
 
 #if defined(_WIN32)
@@ -373,7 +380,7 @@ static struct Watcher* proactorAddWatcher(struct Proactor* pr, unsigned char** p
 	pr->m_poll_fds[i].events |= flags;
 
 	struct Watcher* w = &pr->m_watchers[i * 2];
-	if (flags & POLLWRNORM)
+	if (flags & POLL_EVENT_WR)
 		++w;
 
 	w->m_timer = NULL;
@@ -502,7 +509,7 @@ static void proactorCancelWatcher(struct Proactor* pr, unsigned char* p, unsigne
 				pr->m_poll_fds[i].events &= ~flags;
 
 				struct Watcher* watcher = &pr->m_watchers[i * 2];
-				if (flags & POLLWRNORM)
+				if (flags & POLL_EVENT_WR)
 					++watcher;
 
 				if (watcher->m_timer)
@@ -592,31 +599,31 @@ static void proactorReadControl(struct Proactor* pr)
 			case CMD_ADD_RECV_WATCHER:
 				{
 					unsigned char* pp = &pr->m_control_buf[p+2];
-					proactorAddWatcher(pr,&pp,POLLRDNORM);
+					proactorAddWatcher(pr,&pp,POLL_EVENT_RD);
 					break;
 				}
 
 			case CMD_ADD_RECV_T_WATCHER:
-				proactorAddTimedWatcher(pr,&pr->m_control_buf[p+2],POLLRDNORM);
+				proactorAddTimedWatcher(pr,&pr->m_control_buf[p+2],POLL_EVENT_RD);
 				break;
 
 			case CMD_CANCEL_RECV_WATCHER:
-				proactorCancelWatcher(pr,&pr->m_control_buf[p+2],POLLRDNORM);
+				proactorCancelWatcher(pr,&pr->m_control_buf[p+2],POLL_EVENT_RD);
 				break;
 
 			case CMD_ADD_SEND_WATCHER:
 				{
 					unsigned char* pp = &pr->m_control_buf[p+2];
-					proactorAddWatcher(pr,&pp,POLLWRNORM);
+					proactorAddWatcher(pr,&pp,POLL_EVENT_WR);
 					break;
 				}
 
 			case CMD_ADD_SEND_T_WATCHER:
-				proactorAddTimedWatcher(pr,&pr->m_control_buf[p+2],POLLWRNORM);
+				proactorAddTimedWatcher(pr,&pr->m_control_buf[p+2],POLL_EVENT_WR);
 				break;
 
 			case CMD_CANCEL_SEND_WATCHER:
-				proactorCancelWatcher(pr,&pr->m_control_buf[p+2],POLLWRNORM);
+				proactorCancelWatcher(pr,&pr->m_control_buf[p+2],POLL_EVENT_WR);
 				break;
 
 			default:
@@ -700,7 +707,7 @@ static void proactorRun(task_t task, void* param)
 				}
 
 				struct Watcher* rd_watcher = &pr->m_watchers[i*2];
-				if ((pr->m_poll_fds[i].events & POLLRDNORM) && (pr->m_poll_fds[i].revents & (POLLERR | POLLHUP | POLLRDNORM)))
+				if ((pr->m_poll_fds[i].events & POLL_EVENT_RD) && (pr->m_poll_fds[i].revents & (POLLERR | POLLHUP | POLL_EVENT_RD)))
 				{
 					// Run the read task
 					task_run(rd_watcher->m_parent,rd_watcher->m_fn,rd_watcher->m_param,rd_watcher->m_param_len);
@@ -708,10 +715,10 @@ static void proactorRun(task_t task, void* param)
 					if (rd_watcher->m_timer)
 						rd_watcher->m_timer->m_deadline = 0;
 
-					pr->m_poll_fds[i].events &= ~POLLRDNORM;
+					pr->m_poll_fds[i].events &= ~POLL_EVENT_RD;
 				}
 
-				if ((pr->m_poll_fds[i].events & POLLWRNORM) && (pr->m_poll_fds[i].revents & (POLLERR | POLLWRNORM)))
+				if ((pr->m_poll_fds[i].events & POLL_EVENT_WR) && (pr->m_poll_fds[i].revents & (POLLERR | POLL_EVENT_WR)))
 				{
 					// Run the write task
 					struct Watcher* wr_watcher = rd_watcher+1;
@@ -720,7 +727,7 @@ static void proactorRun(task_t task, void* param)
 					if (wr_watcher->m_timer)
 						wr_watcher->m_timer->m_deadline = 0;
 
-					pr->m_poll_fds[i].events &= ~POLLWRNORM;
+					pr->m_poll_fds[i].events &= ~POLL_EVENT_WR;
 				}
 
 				if (!pr->m_poll_fds[i].events)
@@ -800,7 +807,7 @@ proactor_t proactor_create(task_t parent)
 
 	// Add control i/o watcher
 	pr->m_poll_fds[0].fd = control_fd;
-	pr->m_poll_fds[0].events = POLLRDNORM;
+	pr->m_poll_fds[0].events = POLL_EVENT_RD;
 
 	// Kick off a task to run it
 	pr->m_task = task_run(parent,&proactorRun,&pr,sizeof(pr));
